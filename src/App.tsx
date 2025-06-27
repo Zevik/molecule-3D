@@ -231,13 +231,69 @@ const App = () => {
   const rotationSpeed = useRef<number>(0.01);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Hebrew to English molecule dictionary
+  const hebrewMoleculeDictionary: Record<string, string> = {
+    'מים': 'water',
+    'אמוניה': 'ammonia', 
+    'מתאן': 'methane',
+    'אתילן': 'ethylene',
+    'פחמן דו-חמצני': 'carbon dioxide',
+    'פחמן דו חמצני': 'carbon dioxide',
+    'CO2': 'carbon dioxide',
+    'קפאין': 'caffeine',
+    'גלוקוז': 'glucose',
+    'סוכר': 'glucose',
+    'אלכוהול': 'ethanol',
+    'אתנול': 'ethanol',
+    'מלח': 'sodium chloride',
+    'נתרן כלוריד': 'sodium chloride',
+    'חומצה חזקה': 'sulfuric acid',
+    'חומצה גופרתית': 'sulfuric acid',
+    'חמצן': 'oxygen',
+    'חנקן': 'nitrogen',
+    'מימן': 'hydrogen',
+    'פחמן': 'carbon',
+    'אספירין': 'aspirin',
+    'ויטמין C': 'vitamin c',
+    'ויטמין סי': 'ascorbic acid',
+    'חומצה אסקורבית': 'ascorbic acid',
+    'כולסטרול': 'cholesterol',
+    'אינסולין': 'insulin',
+    'דופמין': 'dopamine',
+    'סרוטונין': 'serotonin',
+    'אדרנלין': 'adrenaline',
+    'חומצה לימונית': 'citric acid',
+    'בנזין': 'benzene',
+    'טולואן': 'toluene',
+    'אתיל אלכוהול': 'ethanol',
+    'מתיל אלכוהול': 'methanol',
+    'מתנול': 'methanol',
+    'חומצה אצטית': 'acetic acid',
+    'חומץ': 'acetic acid'
+  };
+
   // Check if text contains Hebrew characters
   const isHebrew = (text: string): boolean => {
     return /[\u0590-\u05FF]/.test(text);
   };
 
-  // Translate Hebrew to English using Google Translate
-  const translateToEnglish = async (hebrewText: string): Promise<string> => {
+  // Smart Hebrew to English translation
+  const translateHebrewToEnglish = async (hebrewText: string): Promise<string> => {
+    const cleanText = hebrewText.trim().toLowerCase();
+    
+    // First check our local dictionary
+    if (hebrewMoleculeDictionary[cleanText]) {
+      return hebrewMoleculeDictionary[cleanText];
+    }
+    
+    // Try partial matches (for compound names)
+    for (const [hebrew, english] of Object.entries(hebrewMoleculeDictionary)) {
+      if (cleanText.includes(hebrew) || hebrew.includes(cleanText)) {
+        return english;
+      }
+    }
+    
+    // Fallback to Google Translate
     try {
       setIsTranslating(true);
       const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=en&dt=t&q=${encodeURIComponent(hebrewText)}`);
@@ -251,6 +307,9 @@ const App = () => {
       setIsTranslating(false);
     }
   };
+
+  // Legacy function for compatibility
+  const translateToEnglish = translateHebrewToEnglish;
 
   // Search molecules in PubChem by name
   const searchMolecules = async (searchTerm: string): Promise<void> => {
@@ -791,8 +850,20 @@ const App = () => {
     
     // Set new timeout for search
     if (value.trim().length >= 2) {
-      searchTimeoutRef.current = setTimeout(() => {
-        searchMolecules(value.trim());
+      searchTimeoutRef.current = setTimeout(async () => {
+        let searchTerm = value.trim();
+        
+        // If Hebrew, translate first
+        if (isHebrew(searchTerm)) {
+          try {
+            searchTerm = await translateHebrewToEnglish(searchTerm);
+          } catch (error) {
+            console.error('Translation failed:', error);
+            // Continue with original Hebrew term
+          }
+        }
+        
+        searchMolecules(searchTerm);
       }, 300); // 300ms delay
       setShowSuggestions(true);
     } else {
