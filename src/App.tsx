@@ -229,7 +229,7 @@ const App = () => {
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const frameId = useRef<number | null>(null);
   const rotationSpeed = useRef<number>(0.01);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Hebrew to English molecule dictionary
   const hebrewMoleculeDictionary: Record<string, string> = {
