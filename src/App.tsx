@@ -220,23 +220,16 @@ const App = () => {
   const [debugMode, setDebugMode] = useState<boolean>(false);
   const [debugJson, setDebugJson] = useState<string>('');
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
+  const [searchResults, setSearchResults] = useState<Array<{name: string; cid: number; formula?: string}>>([]);
+  const [isSearching, setIsSearching] = useState<boolean>(false);
+  
   const mountRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const frameId = useRef<number | null>(null);
   const rotationSpeed = useRef<number>(0.01);
-
-  // Suggested molecules with Hebrew translations
-  const suggestedMolecules = [
-    { name: 'water', hebrew: 'מים', formula: 'H₂O' },
-    { name: 'ammonia', hebrew: 'אמוניה', formula: 'NH₃' },
-    { name: 'methane', hebrew: 'מתאן', formula: 'CH₄' },
-    { name: 'ethylene', hebrew: 'אתילן', formula: 'C₂H₄' },
-    { name: 'carbon dioxide', hebrew: 'פחמן דו-חמצני', formula: 'CO₂' },
-    { name: 'caffeine', hebrew: 'קפאין', formula: 'C₈H₁₀N₄O₂' },
-    { name: 'glucose', hebrew: 'גלוקוז', formula: 'C₆H₁₂O₆' }
-  ];
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Check if text contains Hebrew characters
   const isHebrew = (text: string): boolean => {
@@ -253,11 +246,66 @@ const App = () => {
       return translatedText;
     } catch (error) {
       console.error('Translation error:', error);
-      // Fallback: try to find in suggestions
-      const found = suggestedMolecules.find(mol => mol.hebrew === hebrewText);
-      return found ? found.name : hebrewText;
+      return hebrewText;
     } finally {
       setIsTranslating(false);
+    }
+  };
+
+  // Search molecules in PubChem by name
+  const searchMolecules = async (searchTerm: string): Promise<void> => {
+    if (!searchTerm || searchTerm.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      // Search for compounds by name (multiple results)
+      const searchResponse = await fetch(
+        `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(searchTerm)}/cids/JSON?name_type=word&listkey_count=10`
+      );
+      
+      if (!searchResponse.ok) {
+        setSearchResults([]);
+        return;
+      }
+
+      const searchData = await searchResponse.json();
+      const cids = searchData.IdentifierList?.CID?.slice(0, 8) || []; // Limit to 8 results
+
+      if (cids.length === 0) {
+        setSearchResults([]);
+        return;
+      }
+
+      // Get properties for these CIDs
+      const propsResponse = await fetch(
+        `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${cids.join(',')}/property/Title,MolecularFormula/JSON`
+      );
+
+      if (propsResponse.ok) {
+        const propsData = await propsResponse.json();
+        const results = propsData.PropertyTable.Properties.map((prop: any) => ({
+          name: prop.Title,
+          cid: prop.CID,
+          formula: prop.MolecularFormula || ''
+        }));
+        
+        setSearchResults(results);
+      } else {
+        // Fallback: just show CIDs without formulas
+        const results = cids.map((cid: number) => ({
+          name: `Compound ${cid}`,
+          cid: cid
+        }));
+        setSearchResults(results);
+      }
+    } catch (error) {
+      console.error('Search error:', error);
+      setSearchResults([]);
+    } finally {
+      setIsSearching(false);
     }
   };
 
@@ -726,18 +774,44 @@ const App = () => {
     }
   };
 
-  const handleSuggestionClick = (suggestion: { name: string; hebrew: string; formula: string }) => {
+  const handleSuggestionClick = (suggestion: { name: string; cid: number; formula?: string }) => {
     setMoleculeName(suggestion.name);
     setShowSuggestions(false);
+    setSearchResults([]);
     fetchMoleculeData(suggestion.name);
   };
 
+  const handleInputChange = (value: string) => {
+    setMoleculeName(value);
+    
+    // Clear existing timeout
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    // Set new timeout for search
+    if (value.trim().length >= 2) {
+      searchTimeoutRef.current = setTimeout(() => {
+        searchMolecules(value.trim());
+      }, 300); // 300ms delay
+      setShowSuggestions(true);
+    } else {
+      setSearchResults([]);
+      setShowSuggestions(false);
+    }
+  };
+
   const handleInputFocus = () => {
-    setShowSuggestions(true);
+    if (moleculeName.length >= 2) {
+      setShowSuggestions(true);
+    }
   };
 
   const handleInputBlur = () => {
-    setTimeout(() => setShowSuggestions(false), 200);
+    setTimeout(() => {
+      setShowSuggestions(false);
+      setSearchResults([]);
+    }, 200);
   };
 
   const handleDebugSubmit = () => {
@@ -859,7 +933,7 @@ const App = () => {
                 <input
                   type="text"
                   value={moleculeName}
-                  onChange={(e) => setMoleculeName(e.target.value)}
+                  onChange={(e) => handleInputChange(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSubmit(e)}
                   onFocus={handleInputFocus}
                   onBlur={handleInputBlur}
@@ -876,25 +950,40 @@ const App = () => {
                 </button>
               </div>
               
-              {/* Suggestions dropdown */}
+              {/* Search results dropdown */}
               {showSuggestions && (
                 <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-md shadow-lg z-10">
-                  <div className="p-2 text-xs text-gray-500 border-b border-gray-100">
-                    {t('suggestedMolecules')}
+                  <div className="p-2 text-xs text-gray-500 border-b border-gray-100 flex items-center gap-2">
+                    {isSearching && (
+                      <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0a12 12 0 0 0-12 12h4z" />
+                      </svg>
+                    )}
+                    <span>
+                      {isSearching ? 'מחפש ב-PubChem...' : searchResults.length > 0 ? 'תוצאות מ-PubChem:' : 'אין תוצאות'}
+                    </span>
                   </div>
-                  {suggestedMolecules.map((molecule) => (
+                  {searchResults.length > 0 && searchResults.map((molecule) => (
                     <button
-                      key={molecule.name}
+                      key={`${molecule.cid}-${molecule.name}`}
                       onClick={() => handleSuggestionClick(molecule)}
                       className="w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors flex justify-between items-center"
                     >
                       <div className="flex items-center gap-2">
-                        <span className="capitalize text-gray-900">{molecule.name}</span>
-                        <span className="text-gray-500">({molecule.hebrew})</span>
+                        <span className="text-gray-900 font-medium">{molecule.name}</span>
+                        <span className="text-xs text-gray-400">CID: {molecule.cid}</span>
                       </div>
-                      <span className="text-xs text-gray-500">{molecule.formula}</span>
+                      {molecule.formula && (
+                        <span className="text-xs text-gray-500 font-mono">{molecule.formula}</span>
+                      )}
                     </button>
                   ))}
+                  {!isSearching && searchResults.length === 0 && moleculeName.length >= 2 && (
+                    <div className="px-4 py-3 text-sm text-gray-500 text-center">
+                      לא נמצאו תוצאות עבור "{moleculeName}"
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -966,7 +1055,7 @@ const App = () => {
             <div className="text-center text-gray-500">
               <div className="text-6xl mb-4">{t('welcomeIcon')}</div>
               <p className="text-xl font-light">{t('welcomeTitle')}</p>
-              <p className="text-sm mt-2">{t('welcomeSubtitle')}</p>
+              <p className="text-sm mt-2">כתוב שם של מולקולה בעברית או אנגלית ותראה אותה במודל תלת-ממדי</p>
             </div>
           </div>
         )}
