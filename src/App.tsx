@@ -293,12 +293,33 @@ const App = () => {
       }
     }
     
-    // Fallback to Google Translate
+    // Fallback to Google Cloud Translation API
+    const googleApiKey = import.meta.env.VITE_GOOGLE_TRANSLATE_API_KEY;
+    if (!googleApiKey) {
+      console.warn('Google Translate API key not found');
+      return hebrewText;
+    }
+
     try {
       setIsTranslating(true);
-      const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=en&dt=t&q=${encodeURIComponent(hebrewText)}`);
+      const response = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${googleApiKey}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          q: hebrewText,
+          source: 'he',
+          target: 'en'
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Translation API error: ${response.status}`);
+      }
+      
       const data = await response.json();
-      const translatedText = data[0][0][0];
+      const translatedText = data.data.translations[0].translatedText;
       return translatedText;
     } catch (error) {
       console.error('Translation error:', error);
